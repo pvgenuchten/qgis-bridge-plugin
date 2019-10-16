@@ -1,7 +1,60 @@
 import traceback
 
 from geocatbridge.ui.publishreportdialog import PublishReportDialog
-from qgis.core import QgsTask, QgsLayerTreeLayer, QgsLayerTreeGroup, QgsNativeMetadataValidator, QgsProject, QgsMapLayer
+
+from qgis.PyQt.QtCore import (
+    Qt,
+    QCoreApplication
+)
+
+from qgis.PyQt.QtWidgets import (
+    QProgressBar
+)
+
+from qgis.core import (
+    QgsTask, 
+    QgsLayerTreeLayer, 
+    QgsLayerTreeGroup, 
+    QgsNativeMetadataValidator, 
+    QgsProject, 
+    QgsMapLayer, 
+    QgsApplication,
+    QgsMessageLog,
+    Qgis
+)
+
+from geocatbridge.utils.gui import (
+    execute
+)
+
+def _tr(t):
+    return QCoreApplication.translate("GeocatBridge", t)
+
+def publish(task, messagebar):
+    progressMessageBar = messagebar.createMessage(_tr("Publishing layers"))
+    progress = QProgressBar()
+    progress.setMaximum(100)        
+    progress.setAlignment(Qt.AlignLeft|Qt.AlignVCenter)
+    progressMessageBar.layout().addWidget(progress)
+    messagebar.pushWidget(progressMessageBar, Qgis.Info)
+    QCoreApplication.processEvents()
+    task.progressChanged.connect(progress.setValue)
+    ret = execute(task.run)            
+    messagebar.clearWidgets()
+    task.finished(ret)
+    if task.exception is not None:        
+        messagebar.clearWidgets()
+        messagebar.pushMessage(_tr("Error while publishing"), _tr("See QGIS log for details"), level=Qgis.Warning, duration=5)
+        QgsMessageLog.logMessage(task.exception, 'GeoCat Bridge', level=Qgis.Critical)
+
+def publishOnBackground(task):
+    def _finished():
+        if task.exception is not None:                    
+            iface.pushMessage(_tr("Error while publishing"), _tr("See QGIS log for details"), level=Qgis.Warning, duration=5)
+            QgsMessageLog.logMessage(task.exception, 'GeoCat Bridge', level=Qgis.Critical)
+    task.taskTerminated.connect(_finished)
+    QgsApplication.taskManager().addTask(task)
+    QCoreApplication.processEvents()
 
 
 class PublishTask(QgsTask):

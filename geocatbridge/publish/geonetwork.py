@@ -20,7 +20,7 @@ from qgis.core import (
     QgsMapRendererCustomPainterJob
 )
 
-from .metadata import uuidForLayer
+from ..utils.layers import uuidForLayer
 from ..utils.files import tempFilenameInTempFolder
 from .serverbase import ServerBase
 
