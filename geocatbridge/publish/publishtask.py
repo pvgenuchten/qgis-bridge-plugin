@@ -12,7 +12,9 @@ from qgis.core import (
     QgsLayerMetadata,
     QgsBox3d,
     QgsCoordinateTransform,
-    QgsCoordinateReferenceSystem    
+    QgsCoordinateReferenceSystem,    
+    QgsMessageLog,
+    Qgis, 
 )
 
 from qgis.PyQt.QtCore import pyqtSignal
@@ -45,7 +47,9 @@ class PublishTask(QgsTask):
     def _layerGroups(self, toPublish):
         def _addGroup(layerTreeGroup):
             layers = []
-            for child in layerTreeGroup.children():                    
+            children = layerTreeGroup.children()
+            children.reverse()  # GS and QGIS have opposite ordering
+            for child in children:
                 if isinstance(child, QgsLayerTreeLayer):
                     name = child.layer().name() 
                     if name in toPublish:
@@ -172,15 +176,19 @@ class PublishTask(QgsTask):
             if self.geodataServer is not None:
                 self.stepStarted.emit(None, GROUPS)
                 groups = self._layerGroups(self.layers)                            
-                self.geodataServer.createGroups(groups)
-                self.geodataServer.closePublishing()
-                self.stepFinished.emit(None, GROUPS)
+                try:
+                    self.geodataServer.createGroups(groups)
+                except:
+                    #TODO: figure out where to put a warning or error message for this
+                    pass
+                finally:
+                    self.geodataServer.closePublishing()
+                    self.stepFinished.emit(None, GROUPS)
             else:
                 self.stepSkipped.emit(None, GROUPS)
 
             return True
         except Exception as e:
-            print(22)
             self.exception = traceback.format_exc()
             return False
 
@@ -221,6 +229,10 @@ class PublishTask(QgsTask):
 
 class ExportTask(QgsTask):
 
+    stepFinished = pyqtSignal(str, int)
+    stepStarted = pyqtSignal(str, int)
+    stepSkipped = pyqtSignal(str, int)
+
     def __init__(self, folder, layers, fields, exportData, exportMetadata, exportSymbology):
         super().__init__("Export from GeoCat Bridge", QgsTask.CanCancel)
         self.exception = None
@@ -250,16 +262,36 @@ class ExportTask(QgsTask):
                     return False
                 self.setProgress(i * 100 / len(self.layers))                      
                 layer = self.layerFromName(name)
-                if self.exportData:
-                    layerFilename = os.path.join(self.folder, layer.name() + ".gpkg")
-                    exportLayer(layer, fields, log=self)
-                if self.exportMetadata:
-                    styleFilename = os.path.join(self.folder, layer.name() + "_style.zip")
-                    saveLayerStyleAsZippedSld(layer, styleFilename)
                 if self.exportSymbology:
+                    styleFilename = os.path.join(self.folder, layer.name() + "_style.zip")                    
+                    self.stepStarted.emit(name, SYMBOLOGY)
+                    saveLayerStyleAsZippedSld(layer, styleFilename)                    
+                    self.stepFinished.emit(name, SYMBOLOGY)
+                else:
+                    self.stepSkipped.emit(name, SYMBOLOGY)
+                if self.exportData:
+                    ext = ".gpkg" if layer.type() == layer.VectorLayer else ".tif"
+                    layerFilename = os.path.join(self.folder, layer.name() + ext)
+                    self.stepStarted.emit(name, DATA)
+                    exportLayer(layer, self.fields, log=self, force=True, path=layerFilename)
+                    self.stepFinished.emit(name, DATA)
+                else:
+                    self.stepSkipped.emit(name, DATA)
+                if self.exportMetadata:
                     metadataFilename = os.path.join(self.folder, layer.name() + "_metadata.zip")
+                    self.stepStarted.emit(name, METADATA)
                     saveMetadata(layer, metadataFilename)
+                    self.stepFinished.emit(name, METADATA)
+                else:
+                    self.stepSkipped.emit(name, METADATA)
+
             return True
         except Exception as e:
             self.exception = traceback.format_exc()
             return False
+
+    def logInfo(self, text):
+        QgsMessageLog.logMessage(text, 'GeoCat Bridge', level=Qgis.Info)
+
+    def logWarning(self, text):
+        QgsMessageLog.logMessage(text, 'GeoCat Bridge', level=Qgis.Warning)
